@@ -1,0 +1,55 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "API Sitios Ciénaga", "description": "Lista de sitios históricos de Ciénaga", "version": "1.0" },
+  "host": "TU-APP.onrender.com",
+  "basePath": "/",
+  "schemes": ["https"],
+  "consumes": [],
+  "produces": ["application/json"],
+  "paths": {
+    "/sitios": {
+      "get": {
+        "summary": "Listar sitios",
+        "operationId": "ListarSitios",
+        "parameters": [
+          { "name": "categoria", "in": "query", "required": false, "type": "string", "x-ms-summary": "Categoría" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": { "type": "array", "items": { "$ref": "#/definitions/Sitio" } }
+          }
+        }
+      }
+    },
+    "/sitios/{id}": {
+      "get": {
+        "summary": "Obtener un sitio",
+        "operationId": "ObtenerSitio",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "integer", "x-ms-summary": "Id" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/Sitio" } }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Sitio": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "nombre": { "type": "string" },
+        "descripcion_historica": { "type": "string" },
+        "categoria": { "type": "string" },
+        "direccion": { "type": "string" },
+        "imagen_url": { "type": "string" }
+      }
+    }
+  },
+  "securityDefinitions": {
+    "api_key": { "type": "apiKey", "in": "header", "name": "x-api-key" }
+  },
+  "security": [ { "api_key": [] } ]
+}
