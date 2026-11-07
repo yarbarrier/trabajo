@@ -41,6 +41,9 @@ function requireKey(req, res, next) {
   next();
 }
 
+// Hash de relleno: se compara cuando el usuario no existe (evita revelar usuarios por tiempo)
+const HASH_RELLENO = bcrypt.hashSync("relleno-no-valido", 10);
+
 const COLUMNAS =
   "id, nombre, descripcion_historica, categoria, direccion, imagen_url";
 
@@ -110,6 +113,33 @@ app.post("/registro", requireKey, async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Error al registrar el usuario" });
+  }
+});
+
+// Inicio de sesión: compara la contraseña escrita con el hash guardado en login
+app.post("/login", requireKey, async (req, res) => {
+  try {
+    const { usuario, clave } = req.body || {};
+    const nombre = typeof usuario === "string" ? usuario.trim() : "";
+
+    if (!nombre || typeof clave !== "string" || !clave || clave.length > 72) {
+      return res.status(400).json({ error: "Faltan usuario o contraseña" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT id, usuario, clave_hash FROM login WHERE usuario = ?",
+      [nombre]
+    );
+    const hash = rows.length ? rows[0].clave_hash : HASH_RELLENO;
+    const coincide = await bcrypt.compare(clave, hash);
+
+    if (!rows.length || !coincide) {
+      return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
+    }
+    res.json({ ok: true, id: rows[0].id, usuario: rows[0].usuario });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al iniciar sesión" });
   }
 });
 
