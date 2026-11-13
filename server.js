@@ -44,8 +44,13 @@ function requireKey(req, res, next) {
 // Hash de relleno: se compara cuando el usuario no existe (evita revelar usuarios por tiempo)
 const HASH_RELLENO = bcrypt.hashSync("relleno-no-valido", 10);
 
-const COLUMNAS =
-  "id, nombre, descripcion_historica, categoria, direccion, imagen_url";
+// Consulta base: trae el nombre de la categoría desde la tabla categorias
+const SELECT_SITIOS = `
+  SELECT s.id, s.nombre, s.descripcion_historica,
+         c.nombre AS categoria, s.direccion, s.imagen_url
+  FROM sitios_cienaga s
+  LEFT JOIN categorias c ON c.id_cat = s.id_cat
+`;
 
 app.get("/", (req, res) => res.json({ ok: true, servicio: "API Ciénaga" }));
 
@@ -76,6 +81,19 @@ app.get("/sitios/:id", requireKey, async (req, res) => {
       return res.status(404).json({ error: "Sitio no encontrado" });
     }
     res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al consultar la base de datos" });
+  }
+});
+
+// Lista de categorías (para el dropdown)
+app.get("/categorias", requireKey, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id_cat, nombre FROM categorias ORDER BY nombre"
+    );
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al consultar la base de datos" });
