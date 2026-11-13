@@ -55,12 +55,10 @@ app.get("/sitios", requireKey, async (req, res) => {
     const { categoria } = req.query;
     const [rows] = categoria
       ? await pool.query(
-          `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE categoria = ? ORDER BY nombre`,
+          `${SELECT_SITIOS} WHERE c.nombre = ? ORDER BY s.nombre`,
           [categoria]
         )
-      : await pool.query(
-          `SELECT ${COLUMNAS} FROM sitios_cienaga ORDER BY nombre`
-        );
+      : await pool.query(`${SELECT_SITIOS} ORDER BY s.nombre`);
     res.json(rows);
   } catch (err) {
     console.error(err);
@@ -71,10 +69,9 @@ app.get("/sitios", requireKey, async (req, res) => {
 // Un solo sitio por id
 app.get("/sitios/:id", requireKey, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE id = ?`,
-      [req.params.id]
-    );
+    const [rows] = await pool.query(`${SELECT_SITIOS} WHERE s.id = ?`, [
+      req.params.id,
+    ]);
     if (rows.length === 0) {
       return res.status(404).json({ error: "Sitio no encontrado" });
     }
