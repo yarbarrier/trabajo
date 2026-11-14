@@ -21,8 +21,7 @@ const {
 } = process.env;
 
 if (!JWT_SECRET) {
-  console.error("Falta la variable de entorno JWT_SECRET");
-  process.exit(1);
+  console.warn("Falta la variable JWT_SECRET: el inicio de sesión no va a funcionar.");
 }
 
 // Conexión a MySQL (Aiven exige SSL)
@@ -39,7 +38,10 @@ const pool = mysql.createPool({
     : { rejectUnauthorized: false },
 });
 
-// Protección simple con clave (cabecera x-api-key)
+// Hash de relleno: se compara cuando el usuario no existe (evita revelar usuarios por tiempo)
+const HASH_RELLENO = bcrypt.hashSync("relleno-no-valido", 10);
+
+// Protección 1: clave de la API (cabecera x-api-key)
 function requireKey(req, res, next) {
   if (!API_KEY) return next(); // si no configuras clave, queda abierta
   if (req.get("x-api-key") !== API_KEY) {
@@ -48,31 +50,35 @@ function requireKey(req, res, next) {
   next();
 }
 
-// Sesión del usuario: lee "Authorization: Bearer <token>" y saca el id del usuario
-function requireAuth(req, res, next) {
-  const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+// Protección 2: sesión del usuario (cabecera x-token).
+// El id del usuario sale del token, nunca de lo que mande la app.
+function requireUser(req, res, next) {
+  const token = req.get("x-token");
+  if (!token || !JWT_SECRET) {
+    return res.status(401).json({ error: "Debes iniciar sesión" });
+  }
   try {
-    req.userId = jwt.verify(token, JWT_SECRET).id;
+    const datos = jwt.verify(token, JWT_SECRET);
+    req.userId = datos.id;
+    req.usuario = datos.usuario;
     next();
   } catch {
-    res.status(401).json({ error: "Sesión no válida, inicia sesión de nuevo" });
+    res.status(401).json({ error: "Sesión inválida o vencida" });
   }
 }
 
-// Hash de relleno: se compara cuando el usuario no existe (evita revelar usuarios por tiempo)
-const HASH_RELLENO = bcrypt.hashSync("relleno-no-valido", 10);
+const esEntero = (v) => /^\d+$/.test(String(v));
+const errorServidor = (res, err, mensaje) => {
+  console.error(err);
+  res.status(500).json({ error: mensaje });
+};
 
-// Consulta base: trae el nombre de la categoría desde la tabla categorias
-const SELECT_SITIOS = `
-  SELECT s.id, s.nombre, s.descripcion_historica,
-         c.nombre AS categoria, s.direccion, s.imagen_url
-  FROM sitios_cienaga s
-  LEFT JOIN categorias c ON c.id_cat = s.id_cat
-`;
+const COLUMNAS =
+  "id, nombre, descripcion_historica, categoria, direccion, imagen_url";
 
 app.get("/", (req, res) => res.json({ ok: true, servicio: "API Ciénaga" }));
 
-// ---------- Sitios y categorías ----------
+// ---------------------------- SITIOS ----------------------------
 
 // Lista todos los sitios (opcional: ?categoria=Plaza)
 app.get("/sitios", requireKey, async (req, res) => {
@@ -80,47 +86,35 @@ app.get("/sitios", requireKey, async (req, res) => {
     const { categoria } = req.query;
     const [rows] = categoria
       ? await pool.query(
-          `${SELECT_SITIOS} WHERE c.nombre = ? ORDER BY s.nombre`,
+          `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE categoria = ? ORDER BY nombre`,
           [categoria]
         )
-      : await pool.query(`${SELECT_SITIOS} ORDER BY s.nombre`);
+      : await pool.query(
+          `SELECT ${COLUMNAS} FROM sitios_cienaga ORDER BY nombre`
+        );
     res.json(rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al consultar la base de datos" });
+    errorServidor(res, err, "Error al consultar la base de datos");
   }
 });
 
 // Un solo sitio por id
 app.get("/sitios/:id", requireKey, async (req, res) => {
   try {
-    const [rows] = await pool.query(`${SELECT_SITIOS} WHERE s.id = ?`, [
-      req.params.id,
-    ]);
+    const [rows] = await pool.query(
+      `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE id = ?`,
+      [req.params.id]
+    );
     if (rows.length === 0) {
       return res.status(404).json({ error: "Sitio no encontrado" });
     }
     res.json(rows[0]);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al consultar la base de datos" });
+    errorServidor(res, err, "Error al consultar la base de datos");
   }
 });
 
-// Lista de categorías (para el dropdown)
-app.get("/categorias", requireKey, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      "SELECT id_cat, nombre FROM categorias ORDER BY nombre"
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al consultar la base de datos" });
-  }
-});
-
-// ---------- Usuarios ----------
+// ---------------------------- USUARIOS ----------------------------
 
 // Registro: guarda usuario + contraseña CIFRADA (hash) en la tabla login
 app.post("/registro", requireKey, async (req, res) => {
@@ -148,14 +142,16 @@ app.post("/registro", requireKey, async (req, res) => {
     if (err.code === "ER_DUP_ENTRY") {
       return res.status(409).json({ error: "El usuario ya existe" });
     }
-    console.error(err);
-    res.status(500).json({ error: "Error al registrar el usuario" });
+    errorServidor(res, err, "Error al registrar el usuario");
   }
 });
 
-// Inicio de sesión: compara la contraseña con el hash y devuelve un token
+// Inicio de sesión: compara la contraseña con el hash y entrega un token
 app.post("/login", requireKey, async (req, res) => {
   try {
+    if (!JWT_SECRET) {
+      return res.status(500).json({ error: "Falta configurar JWT_SECRET en el servidor" });
+    }
     const { usuario, clave } = req.body || {};
     const nombre = typeof usuario === "string" ? usuario.trim() : "";
 
@@ -174,118 +170,129 @@ app.post("/login", requireKey, async (req, res) => {
       return res.status(401).json({ error: "Usuario o contraseña incorrectos" });
     }
 
-    const token = jwt.sign({ id: rows[0].id }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign(
+      { id: rows[0].id, usuario: rows[0].usuario },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
     res.json({ ok: true, id: rows[0].id, usuario: rows[0].usuario, token });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al iniciar sesión" });
+    errorServidor(res, err, "Error al iniciar sesión");
   }
 });
 
-// ---------- Favoritos (cada usuario ve solo los suyos) ----------
+// ---------------------------- FAVORITOS (solo del usuario con sesión) ----------------------------
 
-app.get("/mis-favoritos", requireKey, requireAuth, async (req, res) => {
+app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `${SELECT_SITIOS}
-       JOIN favoritos f ON f.id_sitio = s.id
+      `SELECT s.id, s.nombre, s.descripcion_historica, s.categoria, s.direccion, s.imagen_url
+       FROM favoritos f
+       JOIN sitios_cienaga s ON s.id = f.id_sitio
        WHERE f.id_usuario = ?
        ORDER BY s.nombre`,
       [req.userId]
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al consultar favoritos" });
+    errorServidor(res, err, "Error al consultar tus favoritos");
   }
 });
 
-app.post("/favoritos", requireKey, requireAuth, async (req, res) => {
+app.post("/favoritos", requireKey, requireUser, async (req, res) => {
   try {
-    const idSitio = Number((req.body || {}).id_sitio);
-    if (!Number.isInteger(idSitio) || idSitio <= 0) {
+    const idSitio = req.body?.id_sitio;
+    if (!esEntero(idSitio)) {
       return res.status(400).json({ error: "id_sitio no válido" });
     }
     await pool.query(
-      "INSERT IGNORE INTO favoritos (id_usuario, id_sitio) VALUES (?, ?)",
-      [req.userId, idSitio]
+      "INSERT INTO favoritos (id_usuario, id_sitio) VALUES (?, ?)",
+      [req.userId, Number(idSitio)]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") return res.json({ ok: true }); // ya era favorito
     if (err.code === "ER_NO_REFERENCED_ROW_2") {
-      return res.status(404).json({ error: "Sitio no encontrado" });
+      return res.status(404).json({ error: "El sitio no existe" });
     }
-    console.error(err);
-    res.status(500).json({ error: "Error al guardar el favorito" });
+    errorServidor(res, err, "Error al guardar el favorito");
   }
 });
 
-app.delete("/favoritos/:id_sitio", requireKey, requireAuth, async (req, res) => {
+app.delete("/favoritos/:id_sitio", requireKey, requireUser, async (req, res) => {
   try {
+    if (!esEntero(req.params.id_sitio)) {
+      return res.status(400).json({ error: "id_sitio no válido" });
+    }
     await pool.query(
       "DELETE FROM favoritos WHERE id_usuario = ? AND id_sitio = ?",
-      [req.userId, req.params.id_sitio]
+      [req.userId, Number(req.params.id_sitio)]
     );
     res.json({ ok: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al quitar el favorito" });
+    errorServidor(res, err, "Error al quitar el favorito");
   }
 });
 
-// ---------- Comentarios (los ve todo el mundo, con el nombre del autor) ----------
+// ---------------------------- COMENTARIOS (visibles para todos, con el nombre del autor) ----------------------------
 
 app.get("/sitios/:id/comentarios", requireKey, async (req, res) => {
   try {
+    if (!esEntero(req.params.id)) {
+      return res.status(400).json({ error: "id no válido" });
+    }
     const [rows] = await pool.query(
       `SELECT c.id, c.texto, c.creado_en, l.usuario
        FROM comentarios c
        JOIN login l ON l.id = c.id_usuario
        WHERE c.id_sitio = ?
        ORDER BY c.creado_en DESC`,
-      [req.params.id]
+      [Number(req.params.id)]
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al consultar comentarios" });
+    errorServidor(res, err, "Error al consultar los comentarios");
   }
 });
 
-app.post("/sitios/:id/comentarios", requireKey, requireAuth, async (req, res) => {
+app.post("/sitios/:id/comentarios", requireKey, requireUser, async (req, res) => {
   try {
-    const texto = typeof (req.body || {}).texto === "string" ? req.body.texto.trim() : "";
+    if (!esEntero(req.params.id)) {
+      return res.status(400).json({ error: "id no válido" });
+    }
+    const texto = typeof req.body?.texto === "string" ? req.body.texto.trim() : "";
     if (!texto) {
       return res.status(400).json({ error: "El comentario está vacío" });
     }
-    if (texto.length > 500) {
-      return res.status(400).json({ error: "El comentario es demasiado largo (máximo 500)" });
-    }
     await pool.query(
       "INSERT INTO comentarios (id_sitio, id_usuario, texto) VALUES (?, ?, ?)",
-      [req.params.id, req.userId, texto]
+      [Number(req.params.id), req.userId, texto.slice(0, 500)]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
     if (err.code === "ER_NO_REFERENCED_ROW_2") {
-      return res.status(404).json({ error: "Sitio no encontrado" });
+      return res.status(404).json({ error: "El sitio no existe" });
     }
-    console.error(err);
-    res.status(500).json({ error: "Error al guardar el comentario" });
+    errorServidor(res, err, "Error al guardar el comentario");
   }
 });
 
-// Cada usuario solo puede borrar sus propios comentarios
-app.delete("/comentarios/:id", requireKey, requireAuth, async (req, res) => {
+// Solo puedes borrar tus propios comentarios
+app.delete("/comentarios/:id", requireKey, requireUser, async (req, res) => {
   try {
-    await pool.query(
+    if (!esEntero(req.params.id)) {
+      return res.status(400).json({ error: "id no válido" });
+    }
+    const [r] = await pool.query(
       "DELETE FROM comentarios WHERE id = ? AND id_usuario = ?",
-      [req.params.id, req.userId]
+      [Number(req.params.id), req.userId]
     );
+    if (r.affectedRows === 0) {
+      return res.status(404).json({ error: "El comentario no existe o no es tuyo" });
+    }
     res.json({ ok: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al borrar el comentario" });
+    errorServidor(res, err, "Error al borrar el comentario");
   }
 });
 
