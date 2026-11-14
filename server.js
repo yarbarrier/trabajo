@@ -191,7 +191,7 @@ app.post("/login", requireKey, async (req, res) => {
 app.post("/registro-prestador", requireKey, async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { usuario, clave, nombre_sitio, descripcion, imagen_url, id_cat } = req.body || {};
+    const { usuario, clave, nombre_sitio, descripcion, imagen_url, id_cat, direccion } = req.body || {};
     const nombre = typeof usuario === "string" ? usuario.trim() : "";
     const sitio = typeof nombre_sitio === "string" ? nombre_sitio.trim() : "";
 
@@ -211,6 +211,7 @@ app.post("/registro-prestador", requireKey, async (req, res) => {
     const cat = id_cat ? Number(id_cat) : null;
     const desc = typeof descripcion === "string" && descripcion.trim() ? descripcion.trim() : null;
     const img = typeof imagen_url === "string" && imagen_url.trim() ? imagen_url.trim() : null;
+    const dir = typeof direccion === "string" && direccion.trim() ? direccion.trim() : null;
     const hash = await bcrypt.hash(clave, 10);
 
     await conn.beginTransaction();
@@ -220,15 +221,15 @@ app.post("/registro-prestador", requireKey, async (req, res) => {
       [nombre, hash]
     );
     const [s] = await conn.query(
-      `INSERT INTO sitios_cienaga (nombre, descripcion_historica, imagen_url, ${FK_CATEGORIA})
-       VALUES (?, ?, ?, ?)`,
-      [sitio, desc, img, cat]
+      `INSERT INTO sitios_cienaga (nombre, descripcion_historica, direccion, imagen_url, ${FK_CATEGORIA})
+       VALUES (?, ?, ?, ?, ?)`,
+      [sitio, desc, dir, img, cat]
     );
     await conn.query(
       `INSERT INTO prestadores_servicio
-         (id_usuario, id_sitio, nombre_sitio, descripcion, imagen_url, id_cat)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [u.insertId, s.insertId, sitio, desc, img, cat]
+         (id_usuario, id_sitio, nombre_sitio, descripcion, direccion, imagen_url, id_cat)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [u.insertId, s.insertId, sitio, desc, dir, img, cat]
     );
 
     await conn.commit();
