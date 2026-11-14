@@ -76,11 +76,14 @@ const errorServidor = (res, err, mensaje) => {
 // Columna de sitios_cienaga que apunta a la tabla categorias (llave foránea)
 const FK_CATEGORIA = "id_cat";
 
-// Los sitios con el NOMBRE de su categoría. Se sigue llamando "categoria" para que la app no cambie.
+// Los sitios con el NOMBRE de su categoría y su calificación promedio (view promedio_sitios).
+// Se sigue llamando "categoria" para que la app no cambie.
 const SELECT_SITIOS = `SELECT s.id, s.nombre, s.descripcion_historica,
-  c.nombre AS categoria, s.direccion, s.imagen_url
+  c.nombre AS categoria, s.direccion, s.imagen_url,
+  p.promedio, COALESCE(p.votos, 0) AS votos
   FROM sitios_cienaga s
-  LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}`;
+  LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}
+  LEFT JOIN promedio_sitios p ON p.id_sitio = s.id`;
 
 app.get("/", (req, res) => res.json({ ok: true, servicio: "API Ciénaga" }));
 
@@ -271,10 +274,12 @@ app.post("/registro-prestador", requireKey, async (req, res) => {
 app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT s.id, s.nombre, s.descripcion_historica, c.nombre AS categoria, s.direccion, s.imagen_url
+      `SELECT s.id, s.nombre, s.descripcion_historica, c.nombre AS categoria, s.direccion, s.imagen_url,
+              p.promedio, COALESCE(p.votos, 0) AS votos
        FROM favoritos f
        JOIN sitios_cienaga s ON s.id = f.id_sitio
        LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}
+       LEFT JOIN promedio_sitios p ON p.id_sitio = s.id
        WHERE f.id_usuario = ?
        ORDER BY s.nombre`,
       [req.userId]
@@ -320,7 +325,7 @@ app.delete("/favoritos/:id_sitio", requireKey, requireUser, async (req, res) => 
   }
 });
 
-// ---------------------------- COMENTARIOS (visibles para todos, con el nombre del autor) ----------------------------
+// ---------------------------- COMENTARIOS + CALIFICACIÓN (visibles para todos, con el nombre del autor) ----------------------------
 
 app.get("/sitios/:id/comentarios", requireKey, async (req, res) => {
   try {
@@ -328,7 +333,7 @@ app.get("/sitios/:id/comentarios", requireKey, async (req, res) => {
       return res.status(400).json({ error: "id no válido" });
     }
     const [rows] = await pool.query(
-      `SELECT c.id, c.texto, c.creado_en, l.usuario
+      `SELECT c.id, c.texto, c.calificacion, c.creado_en, l.usuario
        FROM comentarios c
        JOIN login l ON l.id = c.id_usuario
        WHERE c.id_sitio = ?
@@ -350,9 +355,21 @@ app.post("/sitios/:id/comentarios", requireKey, requireUser, async (req, res) =>
     if (!texto) {
       return res.status(400).json({ error: "El comentario está vacío" });
     }
+
+    // Calificación opcional: entero de 1 a 5 (5 es lo mejor)
+    const cal = req.body?.calificacion;
+    let calificacion = null;
+    if (cal != null && cal !== "" && Number(cal) !== 0) {
+      const n = Number(cal);
+      if (!Number.isInteger(n) || n < 1 || n > 5) {
+        return res.status(400).json({ error: "La calificación debe ser un número entero de 1 a 5" });
+      }
+      calificacion = n;
+    }
+
     await pool.query(
-      "INSERT INTO comentarios (id_sitio, id_usuario, texto) VALUES (?, ?, ?)",
-      [Number(req.params.id), req.userId, texto.slice(0, 500)]
+      "INSERT INTO comentarios (id_sitio, id_usuario, texto, calificacion) VALUES (?, ?, ?, ?)",
+      [Number(req.params.id), req.userId, texto.slice(0, 500), calificacion]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
