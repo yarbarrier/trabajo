@@ -185,6 +185,68 @@ app.post("/login", requireKey, async (req, res) => {
   }
 });
 
+// ---------------------------- PRESTADORES DE SERVICIO ----------------------------
+
+// Registro: crea el usuario (login), el sitio (sitios_cienaga) y los une (prestadores_servicio)
+app.post("/registro-prestador", requireKey, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { usuario, clave, nombre_sitio, descripcion, imagen_url, id_cat } = req.body || {};
+    const nombre = typeof usuario === "string" ? usuario.trim() : "";
+    const sitio = typeof nombre_sitio === "string" ? nombre_sitio.trim() : "";
+
+    if (!nombre || !sitio || typeof clave !== "string" || !clave) {
+      return res.status(400).json({ error: "Faltan datos obligatorios" });
+    }
+    if (nombre.length > 50) {
+      return res.status(400).json({ error: "El usuario es demasiado largo (máximo 50)" });
+    }
+    if (clave.length < 6 || clave.length > 72) {
+      return res.status(400).json({ error: "La contraseña debe tener entre 6 y 72 caracteres" });
+    }
+    if (id_cat != null && id_cat !== "" && !esEntero(id_cat)) {
+      return res.status(400).json({ error: "Categoría no válida" });
+    }
+
+    const cat = id_cat ? Number(id_cat) : null;
+    const desc = typeof descripcion === "string" && descripcion.trim() ? descripcion.trim() : null;
+    const img = typeof imagen_url === "string" && imagen_url.trim() ? imagen_url.trim() : null;
+    const hash = await bcrypt.hash(clave, 10);
+
+    await conn.beginTransaction();
+
+    const [u] = await conn.query(
+      "INSERT INTO login (usuario, clave_hash) VALUES (?, ?)",
+      [nombre, hash]
+    );
+    const [s] = await conn.query(
+      `INSERT INTO sitios_cienaga (nombre, descripcion_historica, imagen_url, ${FK_CATEGORIA})
+       VALUES (?, ?, ?, ?)`,
+      [sitio, desc, img, cat]
+    );
+    await conn.query(
+      `INSERT INTO prestadores_servicio
+         (id_usuario, id_sitio, nombre_sitio, descripcion, imagen_url, id_cat)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [u.insertId, s.insertId, sitio, desc, img, cat]
+    );
+
+    await conn.commit();
+    res.status(201).json({ ok: true, mensaje: "Prestador registrado", id_sitio: s.insertId });
+  } catch (err) {
+    await conn.rollback();
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ error: "El usuario ya existe" });
+    }
+    if (err.code === "ER_NO_REFERENCED_ROW_2") {
+      return res.status(400).json({ error: "La categoría no existe" });
+    }
+    errorServidor(res, err, "Error al registrar el prestador");
+  } finally {
+    conn.release();
+  }
+});
+
 // ---------------------------- FAVORITOS (solo del usuario con sesión) ----------------------------
 
 app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
