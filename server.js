@@ -77,10 +77,11 @@ const errorServidor = (res, err, mensaje) => {
 const FK_CATEGORIA = "id_cat";
 
 // Los sitios con el NOMBRE de su categoría y su calificación promedio (view promedio_sitios).
+// El promedio se convierte a número (MySQL manda los decimales como texto).
 // Se sigue llamando "categoria" para que la app no cambie.
 const SELECT_SITIOS = `SELECT s.id, s.nombre, s.descripcion_historica,
   c.nombre AS categoria, s.direccion, s.imagen_url,
-  p.promedio, COALESCE(p.votos, 0) AS votos
+  CAST(p.promedio AS DOUBLE) AS promedio, COALESCE(p.votos, 0) AS votos
   FROM sitios_cienaga s
   LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}
   LEFT JOIN promedio_sitios p ON p.id_sitio = s.id`;
@@ -275,7 +276,7 @@ app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT s.id, s.nombre, s.descripcion_historica, c.nombre AS categoria, s.direccion, s.imagen_url,
-              p.promedio, COALESCE(p.votos, 0) AS votos
+              CAST(p.promedio AS DOUBLE) AS promedio, COALESCE(p.votos, 0) AS votos
        FROM favoritos f
        JOIN sitios_cienaga s ON s.id = f.id_sitio
        LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}
