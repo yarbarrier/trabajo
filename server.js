@@ -73,8 +73,14 @@ const errorServidor = (res, err, mensaje) => {
   res.status(500).json({ error: mensaje });
 };
 
-const COLUMNAS =
-  "id, nombre, descripcion_historica, categoria, direccion, imagen_url";
+// Columna de sitios_cienaga que apunta a la tabla categorias (llave foránea)
+const FK_CATEGORIA = "id_cat";
+
+// Los sitios con el NOMBRE de su categoría. Se sigue llamando "categoria" para que la app no cambie.
+const SELECT_SITIOS = `SELECT s.id, s.nombre, s.descripcion_historica,
+  c.nombre AS categoria, s.direccion, s.imagen_url
+  FROM sitios_cienaga s
+  LEFT JOIN categorias c ON c.id = s.${FK_CATEGORIA}`;
 
 app.get("/", (req, res) => res.json({ ok: true, servicio: "API Ciénaga" }));
 
@@ -86,12 +92,10 @@ app.get("/sitios", requireKey, async (req, res) => {
     const { categoria } = req.query;
     const [rows] = categoria
       ? await pool.query(
-          `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE categoria = ? ORDER BY nombre`,
+          `${SELECT_SITIOS} WHERE c.nombre = ? ORDER BY s.nombre`,
           [categoria]
         )
-      : await pool.query(
-          `SELECT ${COLUMNAS} FROM sitios_cienaga ORDER BY nombre`
-        );
+      : await pool.query(`${SELECT_SITIOS} ORDER BY s.nombre`);
     res.json(rows);
   } catch (err) {
     errorServidor(res, err, "Error al consultar la base de datos");
@@ -102,7 +106,7 @@ app.get("/sitios", requireKey, async (req, res) => {
 app.get("/sitios/:id", requireKey, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ${COLUMNAS} FROM sitios_cienaga WHERE id = ?`,
+      `${SELECT_SITIOS} WHERE s.id = ?`,
       [req.params.id]
     );
     if (rows.length === 0) {
@@ -186,9 +190,10 @@ app.post("/login", requireKey, async (req, res) => {
 app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT s.id, s.nombre, s.descripcion_historica, s.categoria, s.direccion, s.imagen_url
+      `SELECT s.id, s.nombre, s.descripcion_historica, c.nombre AS categoria, s.direccion, s.imagen_url
        FROM favoritos f
        JOIN sitios_cienaga s ON s.id = f.id_sitio
+       LEFT JOIN categorias c ON c.id = s.${FK_CATEGORIA}
        WHERE f.id_usuario = ?
        ORDER BY s.nombre`,
       [req.userId]
