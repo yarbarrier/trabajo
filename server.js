@@ -191,7 +191,7 @@ app.post("/login", requireKey, async (req, res) => {
 app.post("/registro-prestador", requireKey, async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const { usuario, clave, nombre_sitio, descripcion, imagen_url, id_cat, direccion } = req.body || {};
+    const { usuario, clave, nombre_sitio, descripcion, imagen_url, id_cat, direccion, categoria } = req.body || {};
     const nombre = typeof usuario === "string" ? usuario.trim() : "";
     const sitio = typeof nombre_sitio === "string" ? nombre_sitio.trim() : "";
 
@@ -208,13 +208,31 @@ app.post("/registro-prestador", requireKey, async (req, res) => {
       return res.status(400).json({ error: "Categoría no válida" });
     }
 
-    const cat = id_cat ? Number(id_cat) : null;
+    let cat = id_cat ? Number(id_cat) : null;
+    const nombreCat = typeof categoria === "string" ? categoria.trim().slice(0, 100) : "";
     const desc = typeof descripcion === "string" && descripcion.trim() ? descripcion.trim() : null;
     const img = typeof imagen_url === "string" && imagen_url.trim() ? imagen_url.trim() : null;
     const dir = typeof direccion === "string" && direccion.trim() ? direccion.trim() : null;
     const hash = await bcrypt.hash(clave, 10);
 
     await conn.beginTransaction();
+
+    // Si llega la categoría escrita: se busca por nombre en "categorias"; si no existe, se crea
+    if (!cat && nombreCat) {
+      const [c] = await conn.query(
+        "SELECT id_cat FROM categorias WHERE nombre = ?",
+        [nombreCat]
+      );
+      if (c.length) {
+        cat = c[0].id_cat;
+      } else {
+        const [nc] = await conn.query(
+          "INSERT INTO categorias (nombre) VALUES (?)",
+          [nombreCat]
+        );
+        cat = nc.insertId;
+      }
+    }
 
     const [u] = await conn.query(
       "INSERT INTO login (usuario, clave_hash) VALUES (?, ?)",
