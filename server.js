@@ -80,7 +80,7 @@ const FK_CATEGORIA = "id_cat";
 const SELECT_SITIOS = `SELECT s.id, s.nombre, s.descripcion_historica,
   c.nombre AS categoria, s.direccion, s.imagen_url
   FROM sitios_cienaga s
-  LEFT JOIN categorias c ON c.id = s.${FK_CATEGORIA}`;
+  LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}`;
 
 app.get("/", (req, res) => res.json({ ok: true, servicio: "API Ciénaga" }));
 
@@ -193,7 +193,7 @@ app.get("/mis-favoritos", requireKey, requireUser, async (req, res) => {
       `SELECT s.id, s.nombre, s.descripcion_historica, c.nombre AS categoria, s.direccion, s.imagen_url
        FROM favoritos f
        JOIN sitios_cienaga s ON s.id = f.id_sitio
-       LEFT JOIN categorias c ON c.id = s.${FK_CATEGORIA}
+       LEFT JOIN categorias c ON c.id_cat = s.${FK_CATEGORIA}
        WHERE f.id_usuario = ?
        ORDER BY s.nombre`,
       [req.userId]
@@ -303,11 +303,11 @@ app.delete("/comentarios/:id", requireKey, requireUser, async (req, res) => {
 
 // ---------------------------- CATEGORÍAS ----------------------------
 
-// Lista las categorías (tabla categorias)
+// Lista las categorías (tabla categorias). Se devuelve id_cat como "id" para no cambiar el contrato con la app.
 app.get("/categorias", requireKey, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, nombre FROM categorias ORDER BY nombre"
+      "SELECT id_cat AS id, nombre FROM categorias ORDER BY nombre"
     );
     res.json(rows);
   } catch (err) {
