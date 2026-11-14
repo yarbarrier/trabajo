@@ -296,4 +296,18 @@ app.delete("/comentarios/:id", requireKey, requireUser, async (req, res) => {
   }
 });
 
+// ---------------------------- CATEGORÍAS ----------------------------
+
+// Lista las categorías (tabla categorias)
+app.get("/categorias", requireKey, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, nombre FROM categorias ORDER BY nombre"
+    );
+    res.json(rows);
+  } catch (err) {
+    errorServidor(res, err, "Error al consultar las categorías");
+  }
+});
+
 app.listen(PORT, () => console.log(`API escuchando en el puerto ${PORT}`));
