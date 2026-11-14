@@ -374,6 +374,10 @@ app.post("/sitios/:id/comentarios", requireKey, requireUser, async (req, res) =>
     );
     res.status(201).json({ ok: true });
   } catch (err) {
+    // Lo lanza el trigger trg_una_calificacion_por_sitio (un usuario, una calificación por sitio)
+    if (err.code === "ER_SIGNAL_EXCEPTION") {
+      return res.status(409).json({ error: "Ya calificaste este sitio" });
+    }
     if (err.code === "ER_NO_REFERENCED_ROW_2") {
       return res.status(404).json({ error: "El sitio no existe" });
     }
